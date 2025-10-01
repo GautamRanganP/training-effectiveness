@@ -15,10 +15,20 @@ const PORT = process.env.PORT || 3000;
 
 // app.use(cors());
 
+const allowedOrigins = [process.env.DEV_URL, process.env.FRONTEND_URL];
+
 app.use(cors({
-  origin: "https://l-d-project.vercel.app", // change to your frontend origin
-  credentials: true
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow non-browser tools like Postman
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
 }));
+
+app.options("*", cors());
 app.use(express.json());
 app.use(morgan("dev"));
 
