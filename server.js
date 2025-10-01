@@ -7,9 +7,14 @@ import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import trainingRoutes from "./routes/trainings.js";
 import exportRoutes from "./routes/export.js";
+import cors from "cors";
 
 dotenv.config();
 
+app.use(cors({
+  origin: "https://l-d-project.vercel.app/", // change to your frontend origin
+  credentials: true
+}));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
