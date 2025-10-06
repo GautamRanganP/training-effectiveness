@@ -2,6 +2,7 @@
 import express from "express";
 import Training from "../models/Training.js";
 import { authMiddleware, adminOnly } from "../middleware/auth.js";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
@@ -30,6 +31,37 @@ router.post("/", authMiddleware, async (req, res) => {
   }
 });
 
+router.get("/owners", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const owners = await Training.aggregate([
+      { $group: { _id: "$owner", count: { $sum: 1 } } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user"
+        }
+      },
+      { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          id: "$_id",
+          name: "$user.name",
+          email: "$user.email",
+          count: 1
+        }
+      },
+      { $sort: { name: 1 } }
+    ]).exec();
+
+    res.json({ owners: owners.map(o => ({ id: String(o.id), name: o.name || "Unknown", email: o.email, count: o.count })) });
+  } catch (err) {
+    console.error("Failed to load owners:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // Get current user's trainings
 router.get("/mine", authMiddleware, async (req, res) => {
   try {
@@ -37,6 +69,44 @@ router.get("/mine", authMiddleware, async (req, res) => {
     res.json(trainings);
   } catch (err) {
     console.error("Get mine error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// javascript
+router.get("/", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const match = {};
+
+    if (req.query.ownerId) {
+      const ownerId = String(req.query.ownerId).trim();
+      if (!mongoose.Types.ObjectId.isValid(ownerId)) {
+        return res.status(400).json({ message: "Invalid ownerId" });
+      }
+      // instantiate ObjectId with `new`
+      match.owner = new mongoose.Types.ObjectId(ownerId);
+    }
+
+    const trainings = await Training.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: "users",
+          localField: "owner",
+          foreignField: "_id",
+          as: "ownerInfo"
+        }
+      },
+      { $unwind: { path: "$ownerInfo", preserveNullAndEmptyArrays: true } },
+      { $addFields: { ownerName: "$ownerInfo.name" } },
+      { $project: { ownerInfo: 0 } },
+      { $sort: { owner: 1, updatedAt: -1 } }
+    ]).exec();
+
+    res.json(trainings);
+  } catch (err) {
+    console.error("Admin list error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -110,16 +180,8 @@ router.delete("/:id", authMiddleware, async (req, res) => {
 
 
 // Admin: list all trainings (optional owner filter)
-router.get("/", authMiddleware, adminOnly, async (req, res) => {
-  try {
-    const filter = {};
-    if (req.query.ownerId) filter.owner = req.query.ownerId;
-    const trainings = await Training.find(filter).sort({ owner: 1, updatedAt: -1 });
-    res.json(trainings);
-  } catch (err) {
-    console.error("Admin list error:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+// javascript
+
+
 
 export default router;

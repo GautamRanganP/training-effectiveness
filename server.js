@@ -7,6 +7,7 @@ import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import trainingRoutes from "./routes/trainings.js";
 import exportRoutes from "./routes/export.js";
+import productRoutes from "./routes/products.js"
 
 dotenv.config();
 
@@ -48,6 +49,7 @@ app.get("/", (req, res) => res.json({ message: "Training backend up" }));
 app.use("/api/auth", authRoutes);
 app.use("/api/trainings", trainingRoutes);
 app.use("/api/report-excel", exportRoutes);
+app.use("/api/products", productRoutes);
 
 // Generic error handler
 app.use((err, req, res, next) => {
