@@ -75,41 +75,129 @@ router.get("/mine", authMiddleware, async (req, res) => {
 
 
 // javascript
+// Backend: routes/admin/trainings.js (or similar)
+// Backend: GET /api/trainings (with month/year filtering and improved regex escaping + optional sort)
 router.get("/", authMiddleware, adminOnly, async (req, res) => {
   try {
     const match = {};
 
+    // ownerId filter (same as before)
     if (req.query.ownerId) {
       const ownerId = String(req.query.ownerId).trim();
       if (!mongoose.Types.ObjectId.isValid(ownerId)) {
         return res.status(400).json({ message: "Invalid ownerId" });
       }
-      // instantiate ObjectId with `new`
       match.owner = new mongoose.Types.ObjectId(ownerId);
     }
 
-    const trainings = await Training.aggregate([
+    // trainingCode filter (case-insensitive partial match) - improved escape
+    if (req.query.trainingCode) {
+      const code = String(req.query.trainingCode).trim();
+      if (code.length > 0) {
+        // escape regex special chars safely
+        const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        match.trainingCode = { $regex: escaped, $options: "i" };
+      }
+    }
+
+    // month/year filtering (filters by createdAt)
+    // Accepts:
+    //  - year only => matches entire year
+    //  - month + year => matches that month of that year
+    //  - month only => matches that month in current year
+    // Values expected: month (1-12), year (4-digit)
+    const monthRaw = req.query.month != null ? String(req.query.month).trim() : ""
+    const yearRaw = req.query.year != null ? String(req.query.year).trim() : ""
+
+    let month = parseInt(monthRaw, 10)
+    let year = parseInt(yearRaw, 10)
+
+    const now = new Date()
+    if (!Number.isFinite(month)) month = NaN
+    if (!Number.isFinite(year)) year = NaN
+
+    if (!isNaN(month) && (month < 1 || month > 12)) {
+      return res.status(400).json({ message: "Invalid month (expected 1-12)" })
+    }
+    // If only month provided, default to current year
+    if (!isNaN(month) && isNaN(year)) {
+      year = now.getFullYear()
+    }
+
+    if (!isNaN(year)) {
+      // reasonable year bounds check (e.g., 1970..2100)
+      if (year < 1970 || year > 2100) {
+        return res.status(400).json({ message: "Invalid year" })
+      }
+
+      if (!isNaN(month)) {
+        // month + year: start = year-month-01 00:00:00, end = first day of next month
+        const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0))
+        const end = new Date(Date.UTC(year, month - 1 + 1, 1, 0, 0, 0, 0)) // next month
+        match.createdAt = { $gte: start, $lt: end }
+      } else {
+        // year only: start = Jan 1, end = Jan 1 (next year)
+        const start = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0))
+        const end = new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0))
+        match.createdAt = { $gte: start, $lt: end }
+      }
+    }
+
+    // pagination
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, parseInt(req.query.limit) || 20);
+    const skip = (page - 1) * limit;
+
+    // optional sorting params from client (sortBy, sortDir)
+    let sortObj = { owner: 1, updatedAt: -1 }; // default
+    if (req.query.sortBy) {
+      const sortBy = String(req.query.sortBy).trim();
+      const dir = String(req.query.sortDir || "").toLowerCase() === "asc" ? 1 : -1;
+      // simple allowlist for sortable fields to avoid injection of arbitrary fields
+      const allowed = new Set(["owner", "ownerName", "trainingCode", "trainingEffectivenessPercent", "createdAt", "updatedAt"]);
+      if (allowed.has(sortBy)) {
+        sortObj = { [sortBy]: dir };
+      }
+    }
+
+    const pipeline = [
       { $match: match },
       {
         $lookup: {
           from: "users",
           localField: "owner",
           foreignField: "_id",
-          as: "ownerInfo"
-        }
+          as: "ownerInfo",
+        },
       },
       { $unwind: { path: "$ownerInfo", preserveNullAndEmptyArrays: true } },
       { $addFields: { ownerName: "$ownerInfo.name" } },
       { $project: { ownerInfo: 0 } },
-      { $sort: { owner: 1, updatedAt: -1 } }
-    ]).exec();
+      { $sort: sortObj },
+      {
+        $facet: {
+          data: [{ $skip: skip }, { $limit: limit }],
+          total: [{ $count: "count" }],
+        },
+      },
+    ];
 
-    res.json(trainings);
+    const result = await Training.aggregate(pipeline).exec();
+    const facet = result[0] || { data: [], total: [] };
+    const totalCount = (facet.total[0] && facet.total[0].count) || 0;
+
+    res.json({
+      trainings: facet.data,
+      totalCount,
+      page,
+      limit,
+    });
   } catch (err) {
     console.error("Admin list error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // Get single training (owner or admin)
 router.get("/:id", authMiddleware, async (req, res) => {
