@@ -18,6 +18,6 @@ const TrainingSchema = new Schema({
 }, { timestamps: true });
 
 // Allow same trainingCode across users, but unique per owner
-TrainingSchema.index({ owner: 1, trainingCode: 1 }, { unique: true });
+// TrainingSchema.index({ owner: 1, trainingCode: 1 }, { unique: true });
 
 export default mongoose.model("Training", TrainingSchema);
